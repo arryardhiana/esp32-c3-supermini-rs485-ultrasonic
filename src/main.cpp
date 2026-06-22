@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <Update.h>
 #include "config.h"
 
 // ── Hardware Serial ───────────────────────────────────────────────────────────
@@ -20,8 +21,10 @@ static WebServer  webServer(80);
 static Preferences prefs;
 
 // ── Status & Data ─────────────────────────────────────────────────────────────
-static bool     lcdOk    = false;
-static bool     sensorOk = false;
+static bool     lcdOk      = false;
+static bool     sensorOk   = false;
+static bool     buzMute    = false;   // mute buzzer via web
+static uint32_t otaRestartMs = 0;    // >0 = OTA selesai, tunggu restart
 static uint8_t  slaveId  = MODBUS_DEFAULT_SLAVE_ID;
 static uint16_t hreg[HREG_COUNT];
 
@@ -44,6 +47,7 @@ static bool due(Task &t) {
 }
 static Task taskLcd = { 500, 0};
 static Task taskHb  = {5000, 0};
+static Task taskBuz = {  50, 0};   // resolusi pola buzzer 50 ms
 
 // ── Buffer Sensor UART ────────────────────────────────────────────────────────
 static uint8_t  sBuf[SENSOR_FRAME_LEN];
@@ -110,6 +114,11 @@ static void updateRegisters() {
     hreg[HREG_RESERVED]       = 0;
     hreg[HREG_FW_MAJOR]       = FW_VER_MAJOR;
     hreg[HREG_FW_MINOR_PATCH] = (uint16_t)(FW_VER_MINOR * 100 + FW_VER_PATCH);
+    uint8_t alarm = 0;
+    if (!sensorOk)                                          alarm = 3;
+    else if (levPct > 0 && levPct <= ALARM_LEVEL_CRITICAL_PCT) alarm = 2;
+    else if (levPct > 0 && levPct <= ALARM_LEVEL_LOW_PCT)      alarm = 1;
+    hreg[HREG_BUZZER_STATUS] = (uint16_t)((buzMute ? 0x01 : 0) | ((uint16_t)alarm << 1));
 
     for (uint8_t i = 0; i < HREG_COUNT; i++) mb.Hreg(i, hreg[i]);
 }
@@ -131,6 +140,28 @@ static void updateLcd() {
              sensorOk ? "OK" : "ERR");
     lcd->setCursor(0, 1);
     lcd->print(buf);
+}
+
+// Buzzer non-blocking — pola berbasis millis() % periode
+// Alarm 2 (kritis) : 2 beep cepat per detik  (100ms ON / 100ms OFF / 100ms ON / 700ms OFF)
+// Alarm 1 (rendah) : 1 beep per 3 detik       (200ms ON / 2800ms OFF)
+// Alarm 3 (sensor) : 1 beep singkat per 5 detik (mulai setelah 5 s boot)
+static void updateBuzzer() {
+    bool on = false;
+    if (!buzMute) {
+        uint16_t pct10 = hreg[HREG_LEVEL_PCT];
+        if (pct10 > 0 && pct10 <= ALARM_LEVEL_CRITICAL_PCT) {
+            uint32_t t = millis() % 1000UL;
+            on = (t < 100) || (t >= 200 && t < 300);
+        } else if (pct10 > 0 && pct10 <= ALARM_LEVEL_LOW_PCT) {
+            uint32_t t = millis() % 3000UL;
+            on = (t < 200);
+        } else if (!sensorOk && millis() > 5000UL) {
+            uint32_t t = millis() % 5000UL;
+            on = (t < 100);
+        }
+    }
+    digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
 }
 
 // ── Web Handlers ──────────────────────────────────────────────────────────────
@@ -164,6 +195,7 @@ h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;
 .badge.ok{color:var(--ok);border-color:var(--ok)}
 .badge.bad{color:var(--dan);border-color:var(--dan)}
 a.lnk{font-size:13px;font-weight:600;color:var(--ok);text-decoration:none;border:1px solid var(--ok);padding:6px 12px;border-radius:8px}
+.btn-mute{font-size:12px;padding:5px 12px;border-radius:20px;background:#0d1117;border:1px solid var(--line);color:var(--txt);cursor:pointer;font-family:inherit}
 footer{text-align:center;color:var(--mut);font-size:11px;margin-top:18px}
 </style></head><body>
 <header>
@@ -171,6 +203,7 @@ footer{text-align:center;color:var(--mut);font-size:11px;margin-top:18px}
 <span style="display:flex;align-items:center;gap:14px">
 <span><span class="dot" id="dot"></span><span id="conn" style="font-size:12px;color:var(--mut)">menghubungkan&hellip;</span></span>
 <a class="lnk" href="/setup">&#9881; Setup</a>
+<a class="lnk" href="/update">&#11014; OTA</a>
 </span>
 </header>
 <div class="card"><h2>Level BBM</h2>
@@ -187,6 +220,10 @@ footer{text-align:center;color:var(--mut);font-size:11px;margin-top:18px}
 <div class="val"><span id="jarak">--</span><span style="font-size:16px;color:var(--mut)"> cm</span></div></div>
 </div>
 <div class="badges" id="badges"><span class="badge">memuat&hellip;</span></div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+<button class="btn-mute" id="btnMute" onclick="toggleMute()">&#128276; Mute</button>
+<span id="alarmTxt" class="sub"></span>
+</div>
 <footer>Fuel Sensor Genset &middot; FW: )html"
 FW_VERSION_STR
 R"html( &middot; 192.168.4.1</footer>
@@ -194,6 +231,19 @@ R"html( &middot; 192.168.4.1</footer>
 let $=i=>document.getElementById(i);
 function bdg(ok,name){return'<span class="badge '+(ok?'ok':'bad')+'">'+name+': '+(ok?'OK':'&#x2014;')+'</span>';}
 function up(s){let h=s/3600|0,m=s%3600/60|0,x=s%60;return(h?h+'j ':'')+(m?m+'m ':'')+x+'s';}
+function alarmHtml(a,mute){
+  let icon=mute?'&#128267;':'&#128266;';
+  if(a===2)return icon+' <span style="color:var(--dan);font-weight:600">KRITIS: BBM sangat rendah!</span>';
+  if(a===1)return icon+' <span style="color:#d29922">Peringatan: BBM rendah</span>';
+  if(a===3)return'<span style="color:var(--mut)">Sensor tidak ada data</span>';
+  return'';
+}
+async function toggleMute(){
+  try{
+    let d=await(await fetch('/api/buzzmute')).json();
+    $('btnMute').textContent=d.mute?'🔇 Unmute':'🔔 Mute';
+  }catch(e){}
+}
 async function tick(){
   try{
     let d=await(await fetch('/api/data')).json();
@@ -206,6 +256,8 @@ async function tick(){
     f.style.width=Math.max(0,Math.min(100,p))+'%';
     f.style.background=p<20?'linear-gradient(90deg,#f85149,#ff7b72)':p<50?'linear-gradient(90deg,#d29922,#e3b341)':'linear-gradient(90deg,#3fb950,#56d364)';
     $('badges').innerHTML=bdg(d.sensor,'Sensor')+bdg(d.lcd,'LCD')+bdg(d.wifi,'WiFi AP')+'<span class="badge">'+up(d.up)+'</span>';
+    $('alarmTxt').innerHTML=alarmHtml(d.alarm||0,d.buz_mute);
+    $('btnMute').textContent=d.buz_mute?'🔇 Unmute':'🔔 Mute';
     $('dot').classList.add('on');$('conn').textContent='terhubung';
   }catch(e){$('dot').classList.remove('on');$('conn').textContent='terputus';}
 }
@@ -217,18 +269,26 @@ static void webHandleRoot() {
 }
 
 static void webHandleApiData() {
-    char json[220];
+    uint16_t pct10 = hreg[HREG_LEVEL_PCT];
+    uint8_t  alarm = 0;
+    if (!sensorOk)                                          alarm = 3;
+    else if (pct10 > 0 && pct10 <= ALARM_LEVEL_CRITICAL_PCT) alarm = 2;
+    else if (pct10 > 0 && pct10 <= ALARM_LEVEL_LOW_PCT)      alarm = 1;
+    char json[280];
     snprintf(json, sizeof(json),
         "{\"jarak\":%u,\"cm\":%u,\"pct10\":%u,\"vol10\":%u,"
-        "\"up\":%lu,\"id\":%u,\"sensor\":%s,\"lcd\":%s,\"wifi\":true}",
+        "\"up\":%lu,\"id\":%u,\"sensor\":%s,\"lcd\":%s,\"wifi\":true,"
+        "\"alarm\":%u,\"buz_mute\":%s}",
         (unsigned)hreg[HREG_DISTANCE],
         (unsigned)hreg[HREG_LEVEL_CM],
-        (unsigned)hreg[HREG_LEVEL_PCT],
+        (unsigned)pct10,
         (unsigned)hreg[HREG_VOLUME_DL],
         (unsigned long)(millis() / 1000UL),
         (unsigned)slaveId,
         sensorOk ? "true" : "false",
-        lcdOk    ? "true" : "false"
+        lcdOk    ? "true" : "false",
+        (unsigned)alarm,
+        buzMute  ? "true" : "false"
     );
     webServer.sendHeader("Cache-Control", "no-cache");
     webServer.send(200, "application/json", json);
@@ -249,6 +309,118 @@ static void webHandleApiSetId() {
         }
     }
     webServer.send(400, "application/json", "{\"ok\":false}");
+}
+
+// Halaman OTA — upload firmware .bin via browser
+static const char OTA_HTML[] =
+R"html(<!doctype html><html lang="id"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OTA Update &middot; Fuel Genset</title><style>
+:root{--bg:#0f1419;--card:#1a2129;--mut:#7d8896;--txt:#e6edf3;--ok:#3fb950;--dan:#f85149;--line:#2a333d}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:16px;max-width:680px;margin:auto}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+h1{font-size:18px;font-weight:600}
+h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.sub{color:var(--mut);font-size:13px}
+.btn{font:inherit;font-weight:600;padding:8px 18px;border-radius:8px;border:none;background:var(--ok);color:#06210e;cursor:pointer}
+.btn:disabled{opacity:.4;cursor:default}
+.bar{height:14px;background:#0d1117;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:14px 0 6px}
+.fill{height:100%;width:0;border-radius:8px;background:linear-gradient(90deg,#3fb950,#56d364);transition:width .2s}
+a.lnk{font-size:13px;color:var(--mut);text-decoration:none}
+footer{text-align:center;color:var(--mut);font-size:11px;margin-top:18px}
+</style></head><body>
+<header><h1>&#11014; OTA Update</h1><a class="lnk" href="/">&#8592; Dashboard</a></header>
+<div class="card"><h2>Upload Firmware</h2>
+<p class="sub">Versi sekarang: <strong>)html"
+FW_VERSION_STR
+R"html(</strong></p>
+<p class="sub" style="margin:10px 0 14px">Pilih file <code style="background:#0d1117;padding:2px 6px;border-radius:4px">.bin</code> hasil build PlatformIO
+(<code style="background:#0d1117;padding:2px 6px;border-radius:4px">.pio/build/esp32-c3-devkitm-1/firmware.bin</code>), lalu klik Upload.</p>
+<input type="file" id="fw" accept=".bin" style="color:var(--txt);margin-bottom:14px;display:block">
+<button class="btn" id="btn" onclick="doUpload()">&#11014; Upload &amp; Update</button>
+<div class="bar" id="barWrap" style="display:none"><div class="fill" id="fill"></div></div>
+<p id="msg" class="sub" style="margin-top:6px"></p>
+</div>
+<footer>Fuel Sensor Genset &middot; FW: )html"
+FW_VERSION_STR
+R"html( &middot; 192.168.4.1</footer>
+<script>
+function doUpload(){
+  let f=document.getElementById('fw').files[0];
+  if(!f){document.getElementById('msg').textContent='Pilih file .bin terlebih dahulu';return;}
+  let fd=new FormData();fd.append('firmware',f,'firmware.bin');
+  let xhr=new XMLHttpRequest();
+  xhr.open('POST','/update');
+  xhr.upload.onprogress=function(e){
+    if(e.lengthComputable){
+      let p=Math.round(e.loaded/e.total*100);
+      document.getElementById('fill').style.width=p+'%';
+      document.getElementById('msg').textContent='Mengunggah '+p+'%…';
+    }
+  };
+  xhr.onload=function(){
+    document.getElementById('fill').style.width='100%';
+    if(xhr.status===200){
+      document.getElementById('msg').textContent='Berhasil! Perangkat akan restart, halaman refresh dalam 8 detik…';
+      setTimeout(()=>location.href='/',8000);
+    }else{
+      document.getElementById('msg').textContent='Gagal: '+xhr.responseText;
+      document.getElementById('btn').disabled=false;
+    }
+  };
+  xhr.onerror=function(){
+    document.getElementById('msg').textContent='Error koneksi';
+    document.getElementById('btn').disabled=false;
+  };
+  document.getElementById('btn').disabled=true;
+  document.getElementById('barWrap').style.display='';
+  document.getElementById('msg').textContent='Memulai upload…';
+  xhr.send(fd);
+}
+</script></body></html>)html";
+
+static void webHandleOTA() {
+    webServer.send_P(200, "text/html", OTA_HTML);
+}
+
+static void webHandleOTAUpload() {
+    HTTPUpload& up = webServer.upload();
+    if (up.status == UPLOAD_FILE_START) {
+        Serial.printf("[OTA] Mulai: %s\n", up.filename.c_str());
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+            Update.printError(Serial);
+    } else if (up.status == UPLOAD_FILE_WRITE) {
+        if (Update.write(up.buf, up.currentSize) != up.currentSize)
+            Update.printError(Serial);
+    } else if (up.status == UPLOAD_FILE_END) {
+        if (Update.end(true))
+            Serial.printf("[OTA] Selesai: %u bytes — jadwal restart\n", up.totalSize);
+        else
+            Update.printError(Serial);
+    }
+}
+
+static void webHandleOTAPost() {
+    webServer.sendHeader("Connection", "close");
+    if (Update.hasError()) {
+        webServer.send(500, "text/plain", String("OTA gagal: ") + Update.errorString());
+        Serial.printf("[OTA] GAGAL: %s\n", Update.errorString());
+    } else {
+        webServer.send(200, "text/plain", "OK");
+        otaRestartMs = millis();   // restart setelah respons terkirim
+    }
+}
+
+// Toggle mute buzzer — tidak disimpan ke NVS (keamanan: restart = buzzer aktif kembali)
+static void webHandleApiBuzzMute() {
+    buzMute = !buzMute;
+    if (!buzMute) digitalWrite(BUZZER_PIN, LOW);
+    char json[32];
+    snprintf(json, sizeof(json), "{\"mute\":%s}", buzMute ? "true" : "false");
+    webServer.send(200, "application/json", json);
+    Serial.printf("[BUZZER] Mute %s via web\n", buzMute ? "ON" : "OFF");
 }
 
 // Halaman pengaturan — konfigurasi tangki, kalibrasi, Modbus slave ID
@@ -512,6 +684,8 @@ static void prosesSensorFrame() {
 void setup() {
     Serial.begin(115200);
     delay(50);   // satu-satunya delay yang diizinkan
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW);
 
     // ── NVS: load semua pengaturan tersimpan ──
     prefs.begin(NVS_NAMESPACE, true);   // read-only
@@ -574,13 +748,16 @@ void setup() {
     Serial.printf("[WIFI] SoftAP '%s' IP %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
 
     // ── Web Server ──
-    webServer.on("/",            webHandleRoot);
-    webServer.on("/setup",       webHandleSetup);
-    webServer.on("/api/data",    webHandleApiData);
-    webServer.on("/api/cfg",     webHandleApiCfg);
-    webServer.on("/api/cfgsave", webHandleApiCfgSave);
-    webServer.on("/api/calsave", webHandleApiCalSave);
-    webServer.on("/api/setid",   webHandleApiSetId);
+    webServer.on("/",              webHandleRoot);
+    webServer.on("/setup",         webHandleSetup);
+    webServer.on("/update",        HTTP_GET,  webHandleOTA);
+    webServer.on("/update",        HTTP_POST, webHandleOTAPost, webHandleOTAUpload);
+    webServer.on("/api/data",      webHandleApiData);
+    webServer.on("/api/cfg",       webHandleApiCfg);
+    webServer.on("/api/cfgsave",   webHandleApiCfgSave);
+    webServer.on("/api/calsave",   webHandleApiCalSave);
+    webServer.on("/api/setid",     webHandleApiSetId);
+    webServer.on("/api/buzzmute",  webHandleApiBuzzMute);
     webServer.begin();
 
     // Isi nilai register versi (statis, tidak berubah saat runtime)
@@ -588,9 +765,9 @@ void setup() {
     hreg[HREG_FW_MINOR_PATCH] = FW_VER_MINOR * 100 + FW_VER_PATCH;
     updateRegisters();
 
-    Serial.printf("═══ Fuel Sensor %s | Slave %d | AP '%s' | %s ═══\n",
+    Serial.printf("═══ Fuel Sensor %s | Slave %d | AP '%s' | %s | Buzzer GPIO%d ═══\n",
         FW_VERSION_STR, slaveId, AP_SSID,
-        WiFi.softAPIP().toString().c_str());
+        WiFi.softAPIP().toString().c_str(), BUZZER_PIN);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -614,6 +791,13 @@ void loop() {
 
     // ── Web Server ────────────────────────────────────────────────────────────
     webServer.handleClient();
+
+    // ── OTA restart pending (tunggu respons HTTP terkirim dulu) ──────────────
+    if (otaRestartMs > 0 && (uint32_t)(millis() - otaRestartMs) > 500UL)
+        ESP.restart();
+
+    // ── Buzzer alarm (terjadwal 50 ms) ───────────────────────────────────────
+    if (due(taskBuz)) updateBuzzer();
 
     // ── Update register + LCD (terjadwal 500 ms) ─────────────────────────────
     if (due(taskLcd)) {

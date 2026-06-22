@@ -3,7 +3,7 @@
 
 // ── Versi Firmware ────────────────────────────────────────────────────────────
 #define FW_VER_MAJOR 0
-#define FW_VER_MINOR 4
+#define FW_VER_MINOR 5
 #define FW_VER_PATCH 0
 #define _FWSTR1(x) #x
 #define _FWSTR(x)  _FWSTR1(x)
@@ -17,6 +17,7 @@
 #define RS485_RX     6
 #define RS485_TX     7
 // Modul RS485 4-pin (VCC TX RX GND) — tanpa pin DE/RE, arah dikendalikan otomatis oleh modul
+#define BUZZER_PIN   10   // GPIO10 — active buzzer (HIGH = berbunyi)
 
 // ── UART Sensor A0221AU ───────────────────────────────────────────────────────
 // Mode: UART Auto — sensor mengirim frame setiap ~100ms tanpa perlu trigger.
@@ -76,6 +77,11 @@ static const CalPoint CAL_TABLE[] = {
 };
 static const uint8_t CAL_TABLE_SIZE = sizeof(CAL_TABLE) / sizeof(CalPoint);
 
+// ── Alarm Buzzer ─────────────────────────────────────────────────────────────
+// HREG_LEVEL_PCT satuan ×10 (0–1000 = 0.0%–100.0%)
+#define ALARM_LEVEL_LOW_PCT      200   // ×10 → 20.0% — pola 1 beep / 3 detik
+#define ALARM_LEVEL_CRITICAL_PCT 100   // ×10 → 10.0% — pola 2 beep cepat / detik
+
 // ── Peta Holding Register Modbus (append-only!) ───────────────────────────────
 #define HREG_DISTANCE        0   // jarak sensor raw (mm)
 #define HREG_LEVEL_CM        1   // level BBM setelah kalibrasi (cm)
@@ -86,4 +92,5 @@ static const uint8_t CAL_TABLE_SIZE = sizeof(CAL_TABLE) / sizeof(CalPoint);
 #define HREG_RESERVED        6
 #define HREG_FW_MAJOR        7   // versi firmware major
 #define HREG_FW_MINOR_PATCH  8   // minor×100 + patch  (mis. v0.1.0 → 100)
-#define HREG_COUNT           9   // total register
+#define HREG_BUZZER_STATUS   9   // b0=mute, b1-2=alarm (0=none 1=rendah 2=kritis 3=sensor-err)
+#define HREG_COUNT          10   // total register
