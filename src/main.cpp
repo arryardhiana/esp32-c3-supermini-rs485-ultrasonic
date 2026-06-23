@@ -683,7 +683,9 @@ static void prosesSensorFrame() {
 
 void setup() {
     Serial.begin(115200);
-    delay(50);   // satu-satunya delay yang diizinkan
+    // Tunggu USB-CDC enumerate agar log boot tertangkap di serial monitor (maks 2 detik)
+    { uint32_t t0 = millis(); while (!Serial && (millis() - t0) < 2000) {} }
+    delay(50);
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
 
@@ -744,8 +746,9 @@ void setup() {
         slaveId, RS485_BAUD, RS485_RX, RS485_TX);
 
     // ── WiFi SoftAP ──
-    // WiFi.mode() wajib dipanggil eksplisit sebelum softAP() pada ESP32 Arduino ≥3.x,
-    // tanpa ini mode bisa tetap WIFI_OFF dan AP diam-diam gagal (IP = 0.0.0.0).
+    // disconnect(true) bersihkan konfigurasi STA yang mungkin tersimpan di flash,
+    // lalu set mode AP eksplisit — wajib pada ESP32 Arduino ≥3.x.
+    WiFi.disconnect(true);
     WiFi.mode(WIFI_AP);
     bool apOk = WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL);
     if (!apOk) {
@@ -819,12 +822,13 @@ void loop() {
 
     // ── Heartbeat serial monitor (terjadwal 5 s) ─────────────────────────────
     if (due(taskHb)) {
-        Serial.printf("[HB] %s | ID:%d | Jarak:%dcm | Lv:%dcm(%d%%) | Vol:%dL | Sen:%s\n",
+        Serial.printf("[HB] %s | ID:%d | Jarak:%dcm | Lv:%dcm(%d%%) | Vol:%dL | Sen:%s | AP:%s\n",
             FW_VERSION_STR, slaveId,
             hreg[HREG_DISTANCE] / 10,
             hreg[HREG_LEVEL_CM],
             hreg[HREG_LEVEL_PCT] / 10,
             (hreg[HREG_VOLUME_DL] + 5) / 10,
-            sensorOk ? "OK" : "ERROR");
+            sensorOk ? "OK" : "ERROR",
+            WiFi.softAPIP().toString().c_str());
     }
 }
