@@ -750,6 +750,9 @@ void setup() {
     // lalu set mode AP eksplisit — wajib pada ESP32 Arduino ≥3.x.
     WiFi.disconnect(true);
     WiFi.mode(WIFI_AP);
+    // Turunkan TX power sebelum AP start — regulator onboard beberapa batch SuperMini
+    // hanya 250mA, default 19.5dBm bisa menyebabkan brownout sesaat → AP tidak muncul.
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     bool apOk = WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL);
     if (!apOk) {
         Serial.println("[WIFI] GAGAL: softAP() return false — cek power / channel");
