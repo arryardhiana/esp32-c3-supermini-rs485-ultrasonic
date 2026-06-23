@@ -40,8 +40,8 @@
 ```
               ┌──────[USB-C]──────┐
        3V3  ──┤                   ├── GPIO5   → LCD SCL
-        5V  ──┤                   ├── GPIO6   ← RS485 RX  ◄──
-       GND  ──┤  ESP32-C3         ├── GPIO7   → RS485 TX  ──►
+        5V  ──┤                   ├── GPIO6   ← RS485 TX  ◄──
+       GND  ──┤  ESP32-C3         ├── GPIO7   → RS485 RX  ──►
      GPIO0  ──┤  SuperMini        ├── GPIO8   ⚠ strapping (LED bawaan)
      GPIO1  ──┤                   ├── GPIO9   ⚠ BOOT / strapping
      GPIO2  ──┤  ⚠ strapping      ├── GPIO10  → BUZZER
@@ -91,8 +91,8 @@
   ┌───────────┐        ┌─────────────┐
   │  VCC      ├────────┤ 3V3 / 5V   │  (sesuai modul)
   │  GND      ├────────┤ GND        │
-  │  TX (RO)  ├────────┤ GPIO6      │  ← RS485_RX
-  │  RX (DI)  ├────────┤ GPIO7      │  → RS485_TX
+  │  TX (RO)  ├────────┤ GPIO6      │  ← RS485_TX
+  │  RX (DI)  ├────────┤ GPIO7      │  → RS485_RX
   ├───────────┤        └─────────────┘
   │  A (D+)   ├─────── Bus RS485
   │  B (D-)   ├─────── Bus RS485

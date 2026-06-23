@@ -14,8 +14,8 @@
 #define SCL_PIN      5
 #define SENSOR_RX    3    // A0221AU → ESP32 RX
 #define SENSOR_TX   -1    // sensor hanya kirim; -1 = tidak dikonfigurasi
-#define RS485_RX     6
-#define RS485_TX     7
+#define RS485_RX     7
+#define RS485_TX     6
 // Modul RS485 4-pin (VCC TX RX GND) — tanpa pin DE/RE, arah dikendalikan otomatis oleh modul
 #define BUZZER_PIN   10   // GPIO10 — active buzzer (HIGH = berbunyi)
 
