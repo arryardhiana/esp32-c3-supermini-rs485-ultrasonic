@@ -2,7 +2,7 @@
 
 **ESP32-C3 SuperMini** — baca level bahan bakar genset via sensor ultrasonik A0221AU, tampil di LCD 16×2, lapor via Modbus RTU (RS485), dan web dashboard WiFi.
 
-**Versi firmware: v0.4.0**
+**Versi firmware: v0.5.0**
 
 ---
 
@@ -12,9 +12,11 @@
 - Anti-spike: median filter 7-sampel + gate plausibilitas
 - Kalibrasi via tabel `CAL_TABLE` — mendukung geometri tangki non-linear
 - Tampilan LCD 16×2 I2C, update tiap 500 ms
-- Modbus RTU slave via RS485, 9 holding register
+- Modbus RTU slave via RS485, 10 holding register
 - Web dashboard dark theme WiFi SoftAP, polling JSON otomatis 1.5 detik
 - Halaman `/setup` — konfigurasi tangki, kalibrasi, dan Modbus slave ID via browser (tanpa flash ulang)
+- **Buzzer aktif** — alarm berbunyi otomatis saat BBM rendah (≤20%) atau kritis (≤10%), bisa di-mute via dashboard
+- **OTA update via browser** — upload `firmware.bin` langsung dari halaman `/update`, tanpa kabel USB
 - Semua pengaturan runtime tersimpan di NVS (tidak hilang saat power off)
 - Seluruh konfigurasi default terpusat di `include/config.h`
 
@@ -28,7 +30,8 @@
 | 2 | Sensor ultrasonik A0221AU | Antarmuka UART, dipasang di atas tangki |
 | 3 | LCD 16×2 + modul I2C | Alamat otomatis: 0x27 atau 0x3F |
 | 4 | Modul RS485 4-pin (VCC TX RX GND) | Auto-direction, tanpa pin DE/RE |
-| 5 | Catu daya 5V | Untuk MCU dan sensor |
+| 5 | Buzzer aktif 5V | Sinyal HIGH = berbunyi, terhubung ke GPIO10 |
+| 6 | Catu daya 5V | Untuk MCU, sensor, dan buzzer |
 
 ---
 
@@ -41,7 +44,7 @@
        GND  ──┤  ESP32-C3         ├── GPIO7   → RS485 TX  ──►
      GPIO0  ──┤  SuperMini        ├── GPIO8   ⚠ strapping (LED bawaan)
      GPIO1  ──┤                   ├── GPIO9   ⚠ BOOT / strapping
-     GPIO2  ──┤  ⚠ strapping      ├── GPIO10  (bebas)
+     GPIO2  ──┤  ⚠ strapping      ├── GPIO10  → BUZZER
      GPIO3  ──┤  ◄── SENSOR RX   ├── GPIO20  ⚡ USB-CDC RX (jangan pakai)
      GPIO4  ──┤  ↔── LCD SDA     ├── GPIO21  ⚡ USB-CDC TX (jangan pakai)
               └───────────────────┘
@@ -96,6 +99,20 @@
   └───────────┘
   Modul auto-direction (tanpa pin DE/RE) — arah TX/RX dikendalikan otomatis oleh modul.
 ```
+
+### Buzzer Aktif → ESP32-C3
+
+```
+  Buzzer Aktif      ESP32-C3 SuperMini
+  ┌──────────┐       ┌─────────────┐
+  │  VCC (+) ├───────┤ 5V (atau 3V3 jika buzzer 3V3)
+  │  GND (-) ├───────┤ GND        │
+  │  I/O     ├───────┤ GPIO10     │  ← BUZZER_PIN (HIGH = berbunyi)
+  └──────────┘       └─────────────┘
+```
+
+> Buzzer aktif (bukan pasif) — tidak perlu PWM, cukup sinyal HIGH/LOW.  
+> Jika arus buzzer >10 mA, tambahkan transistor NPN (mis. 2N2222) sebagai driver.
 
 ---
 
@@ -164,7 +181,27 @@ Mode **UART Auto** — sensor mengirim frame tiap ~100 ms secara otomatis, tanpa
 
 > Karena mode Auto, pin TX sensor tidak perlu dihubungkan ke MCU (`SENSOR_TX = -1` di config.h).
 
-### 4. WiFi SoftAP
+### 4. Buzzer Alarm
+
+Pin dan threshold dikonfigurasi di `config.h`:
+
+```c
+#define BUZZER_PIN               10    // GPIO10 — active buzzer
+
+#define ALARM_LEVEL_LOW_PCT      200   // ×10 → 20.0% — BBM rendah
+#define ALARM_LEVEL_CRITICAL_PCT 100   // ×10 → 10.0% — BBM kritis
+```
+
+| Kondisi | Pola Bunyi |
+|---|---|
+| BBM ≤ 10% (kritis) | 2 beep cepat per detik |
+| BBM ≤ 20% (rendah) | 1 beep per 3 detik |
+| Sensor error | 1 beep singkat per 5 detik |
+| Normal | Diam |
+
+Tombol **Mute/Unmute** tersedia di dashboard. Mute tidak disimpan ke NVS — setelah restart, buzzer aktif kembali.
+
+### 5. WiFi SoftAP
 
 ```c
 #define AP_SSID    "GensetMonitor"
@@ -173,12 +210,21 @@ Mode **UART Auto** — sensor mengirim frame tiap ~100 ms secara otomatis, tanpa
 
 | URL | Fungsi |
 |---|---|
-| **http://192.168.4.1/** | Dashboard (level BBM, volume, status) |
+| **http://192.168.4.1/** | Dashboard (level BBM, volume, status, mute buzzer) |
 | **http://192.168.4.1/setup** | Konfigurasi tangki, kalibrasi, Modbus ID |
+| **http://192.168.4.1/update** | Upload firmware OTA (file `.bin`) |
 
 Buka dari HP/PC yang terhubung ke WiFi `GensetMonitor`.
 
-### 5. Modbus RTU
+#### OTA Update via Browser
+
+1. Build firmware: `~/.platformio/penv/bin/pio run`
+2. Buka **http://192.168.4.1/update**
+3. Pilih file `.pio/build/esp32-c3-devkitm-1/firmware.bin`
+4. Klik **Upload & Update** — progress bar muncul selama upload
+5. Perangkat restart otomatis, halaman redirect ke dashboard dalam 8 detik
+
+### 6. Modbus RTU
 
 ```c
 #define RS485_BAUD              9600
@@ -194,14 +240,15 @@ Function code: **FC03** (Read Holding Registers). Semua register read-only dari 
 | Offset | Nama | Skala | Contoh nilai | Keterangan |
 |:---:|---|:---:|:---:|---|
 | 0 | `DISTANCE` | 1 mm | 245 | Jarak sensor raw |
-| 1 | `LEVEL_MM` | 1 mm | 255 | Level BBM setelah kalibrasi |
+| 1 | `LEVEL_CM` | 1 cm | 25 | Level BBM setelah kalibrasi |
 | 2 | `LEVEL_PCT` | 0.1 % | 510 | Level 51.0% |
 | 3 | `VOLUME_DL` | 0.1 L | 510 | Volume 51.0 L |
 | 4 | `STATUS` | bit flag | 0x07 | b0=Sensor OK, b1=LCD OK, b2=WiFi OK |
 | 5 | `SLAVE_ID` | — | 1 | Slave ID aktif |
 | 6 | _(reserved)_ | — | 0 | — |
 | 7 | `FW_MAJOR` | — | 0 | Versi firmware major |
-| 8 | `FW_MINOR_PATCH` | — | 100 | minor×100+patch → v0.1.0 |
+| 8 | `FW_MINOR_PATCH` | — | 500 | minor×100+patch → v0.5.0 |
+| 9 | `BUZZER_STATUS` | bit flag | 0x02 | b0=mute, b1-2=alarm (0=none 1=rendah 2=kritis 3=sensor-err) |
 
 > **Append-only** — offset yang sudah ada tidak boleh diubah atau digeser agar kompatibel dengan master yang sudah terpasang.
 
@@ -232,7 +279,7 @@ Boot normal:
 [SENSOR] UART Serial1 @9600 baud, RX=GPIO3
 [MODBUS] Slave ID=1 @9600 baud, RX=GPIO6 TX=GPIO7 (auto-dir)
 [WIFI] SoftAP 'GensetMonitor' IP 192.168.4.1
-═══ Fuel Sensor v0.4.0 | Slave 1 | AP 'GensetMonitor' | 192.168.4.1 ═══
+═══ Fuel Sensor v0.5.0 | Slave 1 | AP 'GensetMonitor' | 192.168.4.1 | Buzzer GPIO10 ═══
 ```
 
 Heartbeat tiap 5 detik:
@@ -260,7 +307,8 @@ Heartbeat tiap 5 detik:
 
 | Versi | Tanggal | Perubahan |
 |---|---|---|
-| v0.4.0 | 2026-06-22 | Dukungan modul RS485 4-pin (auto-direction, tanpa pin DE/RE) — GPIO10 bebas |
+| v0.5.0 | 2026-06-23 | Modul buzzer aktif (GPIO10) + OTA update via browser (/update) |
+| v0.4.0 | 2026-06-22 | Dukungan modul RS485 4-pin (auto-direction, tanpa pin DE/RE) |
 | v0.3.0 | 2026-06-22 | Volume dari dimensi tangki (P×L×T) — akurat, tanpa perlu ukur kapasitas manual |
 | v0.2.0 | 2026-06-22 | Halaman `/setup`: konfigurasi tangki, kalibrasi, dan Modbus slave ID via web (NVS) |
 | v0.1.0 | 2026-06-22 | Rilis awal: sensor UART, LCD I2C, Modbus RTU slave, web SoftAP, kalibrasi tabel |
