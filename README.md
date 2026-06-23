@@ -216,6 +216,19 @@ Tombol **Mute/Unmute** tersedia di dashboard. Mute tidak disimpan ke NVS — set
 
 Buka dari HP/PC yang terhubung ke WiFi `GensetMonitor`.
 
+> **⚠ Catatan Hardware — ESP32-C3 SuperMini SoftAP tidak muncul**
+>
+> Dua masalah umum ditemukan saat pengujian dengan board ESP32-C3 SuperMini:
+>
+> **1. Bug arduino-esp32 3.3.8** — versi ini punya bug di mana SSID SoftAP tidak muncul di scan list perangkat lain.
+> Solusi: `platformio.ini` sudah di-pin ke `espressif32@6.1.0` yang menggunakan arduino-esp32 2.0.x (versi stabil).
+>
+> **2. Regulator onboard kurang kuat** — beberapa batch SuperMini memiliki regulator hanya 250 mA, sedangkan default TX power ESP32-C3 (19.5 dBm) bisa menarik lebih dari itu, menyebabkan brownout sesaat sehingga AP gagal start.
+> Solusi: firmware sudah memanggil `WiFi.setTxPower(WIFI_POWER_8_5dBm)` sebelum `softAP()`.
+>
+> **3. Varian IPEX tanpa antena eksternal** — jalur RF default ke SMD ceramic antenna. Jika ingin pakai konektor IPEX, perlu: pasang antena eksternal + solder jumper pad RF di PCB + lepas SMD antenna.
+> Varian dengan ceramic antenna onboard (tertulis "C3" di area antena) langsung berfungsi tanpa modifikasi hardware.
+
 #### OTA Update via Browser
 
 1. Build firmware: `~/.platformio/penv/bin/pio run`
