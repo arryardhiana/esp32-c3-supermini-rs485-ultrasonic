@@ -46,7 +46,7 @@
 // ── WiFi SoftAP ───────────────────────────────────────────────────────────────
 #define AP_SSID    "GensetMonitor"
 #define AP_PASS    "genset123"
-#define AP_CHANNEL 1
+#define AP_CHANNEL 6
 
 // ── NVS ───────────────────────────────────────────────────────────────────────
 #define NVS_NAMESPACE    "fuelsensor"
