@@ -744,8 +744,15 @@ void setup() {
         slaveId, RS485_BAUD, RS485_RX, RS485_TX);
 
     // ── WiFi SoftAP ──
-    WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL);
-    Serial.printf("[WIFI] SoftAP '%s' IP %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+    // WiFi.mode() wajib dipanggil eksplisit sebelum softAP() pada ESP32 Arduino ≥3.x,
+    // tanpa ini mode bisa tetap WIFI_OFF dan AP diam-diam gagal (IP = 0.0.0.0).
+    WiFi.mode(WIFI_AP);
+    bool apOk = WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL);
+    if (!apOk) {
+        Serial.println("[WIFI] GAGAL: softAP() return false — cek power / channel");
+    }
+    Serial.printf("[WIFI] SoftAP '%s' | ok=%d | IP %s\n",
+        AP_SSID, apOk, WiFi.softAPIP().toString().c_str());
 
     // ── Web Server ──
     webServer.on("/",              webHandleRoot);
