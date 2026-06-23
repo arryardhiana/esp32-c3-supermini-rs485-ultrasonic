@@ -781,6 +781,12 @@ void setup() {
     Serial.printf("═══ Fuel Sensor %s | Slave %d | AP '%s' | %s | Buzzer GPIO%d ═══\n",
         FW_VERSION_STR, slaveId, AP_SSID,
         WiFi.softAPIP().toString().c_str(), BUZZER_PIN);
+
+    // Startup beep: dua beep pendek tanda semua modul selesai inisialisasi
+    for (uint8_t i = 0; i < 2; i++) {
+        digitalWrite(BUZZER_PIN, HIGH); delay(100);
+        digitalWrite(BUZZER_PIN, LOW);  delay(100);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
