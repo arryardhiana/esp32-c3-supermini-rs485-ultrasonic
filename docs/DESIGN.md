@@ -1,3 +1,23 @@
+# DESIGN.md — Web Dashboard Design Standard
+
+> Standar visual dan teknis untuk semua dashboard HTML yang di-serve dari ESP32.
+> Setiap project mengikuti standar ini kecuali ada override eksplisit di PLAN.md.
+>
+> **Implementasi nyata project ini** ada sebagai C++ raw string di [`src/main.cpp`](../src/main.cpp):
+> `DASHBOARD_HTML` (`/`), `SETUP_HTML` (`/setup`), `OTA_HTML` (`/update`).
+> Bagian "API Endpoints" & "Respons `/api/data`" di bawah sudah disesuaikan dengan firmware aktual.
+
+---
+
+## Prinsip Utama
+
+1. **Mobile-first** — dashboard diakses dari HP via WiFi SoftAP
+2. **Zero dependency** — HTML/CSS/JS, tidak ada CDN, tidak ada framework
+3. **Lightweight** —  ukuran HTML kecil agar cepat di ESP32
+4. **Auto-refresh** — data sensor update otomatis tanpa reload halaman
+
+---
+
 # HTML Design Template — Fuel Sensor Genset
 
 Template desain untuk halaman web ESP8266/ESP32 yang di-embed di `main.cpp` sebagai C++ raw string.
@@ -152,12 +172,12 @@ fill.style.background = pct < 20
 ```html
 <div class="grid">
   <div class="metric">
-    <div class="lbl">Suhu</div>
-    <div class="val"><span id="t">--</span> &deg;C</div>
+    <div class="lbl">Volume</div>
+    <div class="val"><span id="vol">--</span> L</div>
   </div>
   <div class="metric">
-    <div class="lbl">Kelembaban</div>
-    <div class="val"><span id="h">--</span> %</div>
+    <div class="lbl">Jarak Sensor</div>
+    <div class="val"><span id="jarak">--</span> cm</div>
   </div>
   <!-- tambah kolom sesuai kebutuhan -->
 </div>
@@ -191,14 +211,50 @@ fill.style.background = pct < 20
 function bdg(ok, name) {
   return '<span class="badge ' + (ok ? 'ok' : 'bad') + '">' + name + ': ' + (ok ? 'OK' : '—') + '</span>';
 }
-// Contoh penggunaan:
-badges.innerHTML = bdg(d.dht,'DHT22') + bdg(d.ads,'ADS1115') + bdg(d.rs485,'RS485')
-  + (d.mock ? '<span class="badge mock">DATA: MOCK</span>' : '');
+// Contoh penggunaan (sesuai /api/data project ini):
+badges.innerHTML = bdg(d.sensor,'Sensor') + bdg(d.lcd,'LCD') + bdg(d.wifi,'WiFi AP')
+  + '<span class="badge">' + up(d.up) + '</span>';
+```
+
+---
+
+### Tombol Mute + Teks Alarm
+
+> Pola dari dashboard project ini: tombol mute buzzer + status alarm dinamis.
+
+```html
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+  <button class="btn-mute" id="btnMute" onclick="toggleMute()">&#128276; Mute</button>
+  <span id="alarmTxt" class="sub"></span>
+</div>
+```
+
+```css
+.btn-mute{font-size:12px;padding:5px 12px;border-radius:20px;background:#0d1117;border:1px solid var(--line);color:var(--txt);cursor:pointer;font-family:inherit}
+```
+
+```js
+async function toggleMute() {
+  try {
+    let d = await (await fetch('/api/buzzmute')).json();
+    $('btnMute').textContent = d.mute ? '🔇 Unmute' : '🔔 Mute';
+  } catch(e) {}
+}
+// Render teks alarm dari d.alarm (0=none 1=rendah 2=kritis 3=sensor-err):
+function alarmHtml(a, mute) {
+  let icon = mute ? '&#128267;' : '&#128266;';
+  if (a === 2) return icon + ' <span style="color:var(--dan);font-weight:600">KRITIS: BBM sangat rendah!</span>';
+  if (a === 1) return icon + ' <span style="color:#d29922">Peringatan: BBM rendah</span>';
+  if (a === 3) return '<span style="color:var(--mut)">Sensor tidak ada data</span>';
+  return '';
+}
 ```
 
 ---
 
 ### Log Aktivitas
+
+> Pola generik (project ini **tidak** mengimplementasi `/api/log` — opsional).
 
 ```html
 <div class="card">
@@ -290,7 +346,8 @@ function up(s) {
 async function tick() {
   try {
     let d = await (await fetch('/api/data')).json();
-    // update DOM dengan d.level, d.temp, d.humid, d.volt, d.up, d.id, d.dht, d.ads, d.rs485, d.mock, d.mm
+    // update DOM dengan d.jarak, d.cm, d.pct10, d.vol10, d.up, d.id,
+    //                    d.sensor, d.lcd, d.wifi, d.alarm, d.buz_mute
     dot.classList.add('on');
     conn.textContent = 'terhubung';
   } catch(e) {
@@ -300,36 +357,67 @@ async function tick() {
 }
 tick();
 setInterval(tick, 1500);   // polling setiap 1.5 detik
-setInterval(tlog, 3000);   // log setiap 3 detik
 ```
 
-### API Endpoints Tersedia
+### API Endpoints (firmware aktual)
 
-| Endpoint | Method | Fungsi |
+Semua endpoint memakai **method GET** (parameter via query string). Lihat handler di
+[`src/main.cpp`](../src/main.cpp).
+
+| Endpoint | Fungsi | Parameter |
 |---|---|---|
-| `/api/data` | GET | Data sensor lengkap (JSON) |
-| `/api/log` | GET | Array log aktivitas |
-| `/api/setid?id=N` | GET | Set Modbus Slave ID |
-| `/api/cal` | GET | Baca kalibrasi saat ini |
-| `/api/calsave?h=&v0=&v1=&v2=` | GET | Simpan kalibrasi 3 titik |
+| `/api/data` | Data sensor + status (JSON) | — |
+| `/api/cfg` | Baca config tangki + kalibrasi (satuan cm) | — |
+| `/api/cfgsave` | Simpan geometri tangki (cm → NVS) | `th,tl,tw,so` |
+| `/api/calsave` | Simpan tabel kalibrasi 2–5 titik (cm → NVS) | `n,j0,l0,j1,l1,…` |
+| `/api/setid` | Set Modbus Slave ID (1–247 → NVS) | `id` |
+| `/api/buzzmute` | Toggle mute buzzer (tidak persist) | — |
+| `/update` | Upload firmware OTA (`POST`, multipart `.bin`) | file |
+
+> Halaman HTML: `/` (dashboard), `/setup` (konfigurasi), `/update` (OTA).
+> Endpoint simpan mengembalikan `{"ok":true}` / `{"ok":false}`; `/api/buzzmute` → `{"mute":bool}`.
 
 ### Respons `/api/data`
 
+> Nilai integer berskala (hemat & hindari float). `pct10`/`vol10` = nilai ×10.
+
 ```json
 {
-  "level": 75.3,
-  "mm": 452,
-  "temp": 28.5,
-  "humid": 65.0,
-  "volt": 1.823,
+  "jarak": 245,
+  "cm": 25,
+  "pct10": 510,
+  "vol10": 510,
   "up": 3600,
   "id": 1,
-  "dht": true,
-  "ads": true,
-  "rs485": true,
-  "mock": false
+  "sensor": true,
+  "lcd": true,
+  "wifi": true,
+  "alarm": 0,
+  "buz_mute": false
 }
 ```
+
+| Field | Arti | Konversi tampilan |
+|---|---|---|
+| `jarak` | jarak sensor raw (mm) | `jarak/10` → cm |
+| `cm` | level BBM (cm) | langsung |
+| `pct10` | level ×10 | `pct10/10` → % |
+| `vol10` | volume ×10 (L) | `vol10/10` → L |
+| `up` | uptime (detik) | helper `up()` |
+| `id` | Modbus slave ID | langsung |
+| `sensor`/`lcd`/`wifi` | status modul (bool) | badge |
+| `alarm` | 0=none 1=rendah 2=kritis 3=sensor-err | teks alarm |
+| `buz_mute` | buzzer di-mute (bool) | label tombol mute |
+
+### Respons `/api/cfg`
+
+```json
+{ "th": 50, "tl": 40, "tw": 50, "so": 3, "id": 1,
+  "cal": [ {"j": 3.0, "l": 47.0}, {"j": 50.0, "l": 0.0} ] }
+```
+
+> `th/tl/tw/so` = tinggi/panjang/lebar/offset tangki dalam **cm** (internal firmware mm).
+> `cal[].j` = jarak sensor (cm), `cal[].l` = level BBM dari dasar (cm).
 
 ---
 
