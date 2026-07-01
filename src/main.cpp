@@ -119,6 +119,7 @@ static void updateRegisters() {
     else if (levPct > 0 && levPct <= ALARM_LEVEL_CRITICAL_PCT) alarm = 2;
     else if (levPct > 0 && levPct <= ALARM_LEVEL_LOW_PCT)      alarm = 1;
     hreg[HREG_BUZZER_STATUS] = (uint16_t)((buzMute ? 0x01 : 0) | ((uint16_t)alarm << 1));
+    hreg[HREG_HW_TYPE]       = HW_BOARD_ID;
 
     for (uint8_t i = 0; i < HREG_COUNT; i++) mb.Hreg(i, hreg[i]);
 }
@@ -274,11 +275,11 @@ static void webHandleApiData() {
     if (!sensorOk)                                          alarm = 3;
     else if (pct10 > 0 && pct10 <= ALARM_LEVEL_CRITICAL_PCT) alarm = 2;
     else if (pct10 > 0 && pct10 <= ALARM_LEVEL_LOW_PCT)      alarm = 1;
-    char json[280];
+    char json[300];
     snprintf(json, sizeof(json),
         "{\"jarak\":%u,\"cm\":%u,\"pct10\":%u,\"vol10\":%u,"
         "\"up\":%lu,\"id\":%u,\"sensor\":%s,\"lcd\":%s,\"wifi\":true,"
-        "\"alarm\":%u,\"buz_mute\":%s}",
+        "\"alarm\":%u,\"buz_mute\":%s,\"hw\":%u}",
         (unsigned)hreg[HREG_DISTANCE],
         (unsigned)hreg[HREG_LEVEL_CM],
         (unsigned)pct10,
@@ -288,7 +289,8 @@ static void webHandleApiData() {
         sensorOk ? "true" : "false",
         lcdOk    ? "true" : "false",
         (unsigned)alarm,
-        buzMute  ? "true" : "false"
+        buzMute  ? "true" : "false",
+        (unsigned)HW_BOARD_ID
     );
     webServer.sendHeader("Cache-Control", "no-cache");
     webServer.send(200, "application/json", json);

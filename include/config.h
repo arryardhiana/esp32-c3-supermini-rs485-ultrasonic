@@ -43,6 +43,10 @@
 #define RS485_BAUD              9600
 #define MODBUS_DEFAULT_SLAVE_ID 1
 
+// ── Identitas Hardware ────────────────────────────────────────────────────────
+// Nilai numerik untuk register HREG_HW_TYPE — tambah di sini jika ada board baru.
+#define HW_BOARD_ID   1   // 1 = ESP32-C3 SuperMini
+
 // ── WiFi SoftAP ───────────────────────────────────────────────────────────────
 #define AP_SSID    "GensetMonitor"
 #define AP_PASS    "genset123"
@@ -93,4 +97,5 @@ static const uint8_t CAL_TABLE_SIZE = sizeof(CAL_TABLE) / sizeof(CalPoint);
 #define HREG_FW_MAJOR        7   // versi firmware major
 #define HREG_FW_MINOR_PATCH  8   // minor×100 + patch  (mis. v0.1.0 → 100)
 #define HREG_BUZZER_STATUS   9   // b0=mute, b1-2=alarm (0=none 1=rendah 2=kritis 3=sensor-err)
-#define HREG_COUNT          10   // total register
+#define HREG_HW_TYPE        10   // board ID hardware (lihat HW_BOARD_ID di atas)
+#define HREG_COUNT          11   // total register

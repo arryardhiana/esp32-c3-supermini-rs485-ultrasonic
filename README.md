@@ -12,7 +12,7 @@
 - Anti-spike: median filter 7-sampel + gate plausibilitas
 - Kalibrasi via tabel `CAL_TABLE` — mendukung geometri tangki non-linear
 - Tampilan LCD 16×2 I2C, update tiap 500 ms
-- Modbus RTU slave via RS485, 10 holding register
+- Modbus RTU slave via RS485, 11 holding register
 - Web dashboard dark theme WiFi SoftAP, polling JSON otomatis 1.5 detik
 - Halaman `/setup` — konfigurasi tangki, kalibrasi, dan Modbus slave ID via browser (tanpa flash ulang)
 - **Buzzer aktif** — alarm berbunyi otomatis saat BBM rendah (≤20%) atau kritis (≤10%), bisa di-mute via dashboard
@@ -262,6 +262,7 @@ Function code: **FC03** (Read Holding Registers). Semua register read-only dari 
 | 7 | `FW_MAJOR` | — | 0 | Versi firmware major |
 | 8 | `FW_MINOR_PATCH` | — | 500 | minor×100+patch → v0.5.0 |
 | 9 | `BUZZER_STATUS` | bit flag | 0x02 | b0=mute, b1-2=alarm (0=none 1=rendah 2=kritis 3=sensor-err) |
+| 10 | `HW_TYPE` | — | 1 | Board ID hardware (1 = ESP32-C3 SuperMini) |
 
 > **Append-only** — offset yang sudah ada tidak boleh diubah atau digeser agar kompatibel dengan master yang sudah terpasang.
 
